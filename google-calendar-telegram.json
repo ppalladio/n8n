@@ -1,0 +1,656 @@
+{
+  "name": "Telegram to Google Calendar with Gemini",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "4ae52f7b-a18e-4e1a-9db9-76c2fa1d899d",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        400
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "c052e1a5-e6dd-4833-bd59-7cb0ccf82795",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.photo }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "array",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "f4bcb790-8575-49f1-8189-47851e3fad73"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f8e82ef-3fca-4ade-b901-8864736acbf9",
+      "name": "Check Message Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        208,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "content-assignment",
+              "name": "content",
+              "value": "={{ $json.message.text }}",
+              "type": "string"
+            },
+            {
+              "id": "type-assignment",
+              "name": "messageType",
+              "value": "text",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5174f18-b111-4699-8090-ea1bb361e9b6",
+      "name": "Process Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        656,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.photo[$json.message.photo.length - 1].file_id }}",
+        "additionalFields": {}
+      },
+      "id": "31ea71b2-e31b-4535-8d0a-871c960f552b",
+      "name": "Download Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        544
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "photo-content",
+              "name": "content",
+              "value": "={{ $json.message.caption || 'Analyze this image and extract any event details (date, time, location, description)' }}",
+              "type": "string"
+            },
+            {
+              "id": "photo-data",
+              "name": "messageType",
+              "value": "=photo",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "63ecaf0a-7f09-4172-b209-5ca522450525",
+      "name": "Process Photo",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        656,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all input items\nconst items = $input.all();\n\nreturn items.map(item => {\n  const geminiData = item.json;\n  \n  // Extract text from Gemini response\n  let responseText = '';\n  \n  if (geminiData.text) {\n    responseText = geminiData.text;\n  } else if (geminiData.response) {\n    responseText = geminiData.response;\n  } else if (geminiData.content && geminiData.content.parts && geminiData.content.parts.length > 0) {\n    responseText = geminiData.content.parts[0].text;\n  } else {\n    throw new Error('Could not find response text');\n  }\n  \n  // Clean response\n  const cleanResponse = responseText\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n  \n  // Extract JSON\n  const jsonMatch = cleanResponse.match(/\\{[\\s\\S]*\\}/);\n  if (!jsonMatch) {\n    throw new Error('No JSON found');\n  }\n  \n  // Parse\n  const eventData = JSON.parse(jsonMatch[0]);\n  \n  // Validate\n  if (!eventData.title || !eventData.start || !eventData.end) {\n    throw new Error('Missing required fields');\n  }\n  \n  // FORCE Madrid timezone if not present\n  if (!eventData.start.match(/[+-]\\d{2}:\\d{2}$/)) {\n    eventData.start = eventData.start.replace(/Z?$/, '+01:00');\n  }\n  if (!eventData.end.match(/[+-]\\d{2}:\\d{2}$/)) {\n    eventData.end = eventData.end.replace(/Z?$/, '+01:00');\n  }\n  \n  return { json: eventData };\n});"
+      },
+      "id": "610dc387-1118-4cb0-beeb-de28396c7768",
+      "name": "Parse JSON Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=✅ Event created successfully!\n\n📅 *{{ $json.summary }}*\n\n🕐 {{ DateTime.fromISO($json.start.dateTime).setZone('Europe/Madrid').toFormat('EEEE, MMMM d, yyyy') }}\n⏰ {{ DateTime.fromISO($json.start.dateTime).setZone('Europe/Madrid').toFormat('HH:mm') }} - {{ DateTime.fromISO($json.end.dateTime).setZone('Europe/Madrid').toFormat('HH:mm') }}\n{{ $json.location ? '📍 ' + $json.location + '\\n' : '' }}\n\n{{ $json.description }}\n",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "f0df4e65-93de-4490-8c40-e93f14bee1d0",
+      "name": "Send Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2128,
+        304
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=❌ Error creating event:\n\n{{ $json.message || 'Unknown error occurred' }}\n\nPlease try again with a clearer message.",
+        "additionalFields": {}
+      },
+      "id": "38c709f8-87cc-48df-bc2f-3807f2058475",
+      "name": "Send Error Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2128,
+        496
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "You are a calendar event extraction assistant. Analyze this image to extract event details.\n\n{{ $json.message.caption ? 'Caption: ' + $json.message.caption : 'No caption - extract any dates, times, locations visible in the image.' }}\n\nCRITICAL TIMEZONE: Europe/Madrid (+01:00 or +02:00)\nCurrent time: {{ $now.setZone('Europe/Madrid').toISO() }}\n\nReturn ONLY valid JSON:\n{\n  \"title\": \"Event title\",\n  \"start\": \"2025-12-01T14:00:00+01:00\",\n  \"end\": \"2025-12-01T15:00:00+01:00\",\n  \"description\": \"Details from image\",\n  \"location\": \"Location if visible\"\n}\n\nRules:\n- ISO 8601 with +01:00 or +02:00\n- If no time, use 09:00:00+01:00\n- If no date, use tomorrow\n- If no location, use \"\"\n\nReturn ONLY JSON.",
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        944,
+        544
+      ],
+      "id": "a7c27fb1-41de-4d15-9aa6-95f9025cc3ac",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PLACEHOLDER_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2e11c89c-6e01-4d22-a9b1-95c1cf2d13cc",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1232,
+        256
+      ],
+      "id": "58d4bb13-86e3-4307-b2c7-589451b67408",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=❌ Error creating event:\n\n{{ $json.message || 'Unknown error occurred' }}\n\nPlease try again with a clearer message.",
+        "additionalFields": {}
+      },
+      "id": "127549d3-7ae0-453e-92ec-f546110875ba",
+      "name": "Send Error Message1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        208
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2e11c89c-6e01-4d22-a9b1-95c1cf2d13cc",
+              "leftValue": "={{ $json.content.parts[0].text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1232,
+        544
+      ],
+      "id": "96b2b5d0-fc17-4a20-9439-09c4a16e5cd5",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=❌ Error creating event:\n\n{{ $json.message || 'Unknown error occurred' }}\n\nPlease try again with a clearer message.",
+        "additionalFields": {}
+      },
+      "id": "3742d646-a22b-42c4-92a1-b7ac2e0d35ca",
+      "name": "Send Error Message2",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        592
+      ],
+      "webhookId": "PLACEHOLDER_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "Primary Calendar"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location }}",
+          "summary": "={{ $json.title }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        400
+      ],
+      "id": "02bb70e6-e9ce-4498-9386-e93355c1f2cf",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "PLACEHOLDER_GOOGLE_CALENDAR_CREDENTIAL_ID",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fbc272d0-6b78-4a9a-ad57-1ef9432eb64e",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1904,
+        400
+      ],
+      "id": "207d567e-c364-413c-bee9-a4648415050f",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a calendar event extraction assistant analyzing messages in Spanish from Barcelona, Spain.\n\nCRITICAL TIMEZONE REQUIREMENTS:\n- User timezone: Europe/Madrid (CET/CEST)\n- Current date/time: {{ $now.setZone('Europe/Madrid').toISO() }}\n- ALL datetime values MUST include timezone offset (+01:00 or +02:00)\n\nMessage to analyze: {{ $json.content }}\n\nReturn ONLY valid JSON in this EXACT format:\n{\n  \"title\": \"Event title\",\n  \"start\": \"2025-11-12T18:45:00+01:00\",\n  \"end\": \"2025-11-12T19:45:00+01:00\",\n  \"description\": \"Event details\",\n  \"location\": \"Address or place name (if mentioned)\"\n}\n\nEXTRACTION RULES:\n- Times MUST include +01:00 or +02:00 suffix\n- ISO 8601 format: YYYY-MM-DDTHH:MM:SS+01:00\n- If no time given, use 09:00:00+01:00\n- If no date given, use tomorrow\n- If no end time, add 1 hour to start\n- For all-day events, use 00:00:00+01:00 to 23:59:00+01:00\n- Extract location from addresses, place names, or \"en/at\" phrases\n- If no location mentioned, set location to empty string \"\"\n\nLOCATION EXAMPLES:\n- \"reunión en Carrer de Balmes 243\" → \"Carrer de Balmes 243\"\n- \"cita en Centro Médico Robresa\" → \"Centro Médico Robresa\"\n- \"at Starbucks Barcelona\" → \"Starbucks Barcelona\"\n- \"no location mentioned\" → \"\"\n\nReturn ONLY the JSON, no markdown, no explanations."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        880,
+        256
+      ],
+      "id": "bae24030-3618-419b-93e4-8fc8d51bda13",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PLACEHOLDER_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Message Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Message Type": {
+      "main": [
+        [
+          {
+            "node": "Process Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Text": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Photo": {
+      "main": [
+        [
+          {
+            "node": "Process Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Photo": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation": {
+      "main": [
+        []
+      ]
+    },
+    "Parse JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Message": {
+      "main": [
+        []
+      ]
+    },
+    "Create an event": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "PLACEHOLDER_VERSION_ID",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "PLACEHOLDER_INSTANCE_ID"
+  },
+  "id": "PLACEHOLDER_WORKFLOW_ID",
+  "tags": []
+}
